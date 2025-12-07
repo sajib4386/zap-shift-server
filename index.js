@@ -81,11 +81,42 @@ async function run() {
         const paymentCollection = db.collection('payments')
         const ridersCollection = db.collection('riders')
 
+        // Admin Verify
+        // must be used after verifyFBToken middleware
+        const verifyAdmin = async (req, res, next) => {
+            const email = req.decoded_email;
+            const query = { email }
+            const user = await userCollection.findOne(query);
+
+            if (!user || user.role !== 'Admin') {
+                return res.status(403).send({ message: 'forbidden access' })
+            }
+            next()
+        }
+
 
         // Users APIs
+
+        // All Users 
+        app.get("/users", verifyFBToken, async (req, res) => {
+            const searchText = req.query.searchText;
+            const query = {}
+            if (searchText) {
+                query.$or = [
+                    { displayName: { $regex: searchText, $options: 'i' } },
+                    { email: { $regex: searchText, $options: 'i' } }
+                ]
+            }
+
+            const cursor = userCollection.find(query);
+            const result = await cursor.toArray();
+            res.send(result)
+        })
+
+        // User Create
         app.post("/users", async (req, res) => {
             const user = req.body;
-            user.role = 'user';
+            user.role = 'User';
             user.createdAt = new Date();
 
             const email = user.email;
@@ -95,6 +126,28 @@ async function run() {
             }
             const result = await userCollection.insertOne(user);
             res.send(result);
+        })
+
+        // User Update
+        app.patch('/users/:id/role', verifyFBToken, verifyAdmin, async (req, res) => {
+            const id = req.params.id;
+            const roleInfo = req.body;
+            const query = { _id: new ObjectId(id) }
+            const updateDoc = {
+                $set: {
+                    role: roleInfo.role
+                }
+            }
+            const result = await userCollection.updateOne(query, updateDoc);
+            res.send(result)
+        })
+
+        // এখানে user কোন role এ  আছে সেটা দেখা হচ্ছে (normal user,admin,rider)
+        app.get('/users/:email/role', async (req, res) => {
+            const email = req.params.email;
+            const query = { email };
+            const user = await userCollection.findOne(query)
+            res.send({ role: user?.role || 'user' })
         })
 
         // Rider APIs
@@ -110,24 +163,55 @@ async function run() {
         })
 
         // All Pending Rider
+        // app.get('/riders', async (req, res) => {
+        //     const { status, district, workStatus } = req.query;
+        //     const query = {};
+
+        //     if (status) {
+        //         query.status = status;
+        //     }
+        //     if (district) {
+        //         query.district = district;
+        //     }
+        //     if (workStatus) {
+        //         query.workStatus = workStatus;
+        //     }
+
+        //     const cursor = ridersCollection.find(query);
+        //     const result = await cursor.toArray();
+        //     res.send(result)
+        // })
+
         app.get('/riders', async (req, res) => {
             const query = {};
+
             if (req.query.status) {
                 query.status = req.query.status;
             }
+
+            if (req.query.district && req.query.district !== "undefined") {
+                query.district = req.query.district;
+            }
+
+            if (req.query.workStatus && req.query.workStatus !== "undefined") {
+                query.workStatus = req.query.workStatus;
+            }
+
             const cursor = ridersCollection.find(query);
             const result = await cursor.toArray();
-            res.send(result)
-        })
+            res.send(result);
+        });
+
 
         // Specific rider API
-        app.patch('/riders/:id', verifyFBToken, async (req, res) => {
+        app.patch('/riders/:id', verifyFBToken, verifyAdmin, async (req, res) => {
             const status = req.body.status;
             const id = req.params.id;
             const query = { _id: new ObjectId(id) }
             const updateDoc = {
                 $set: {
-                    status: status
+                    status: status,
+                    workStatus: 'Available'
                 }
             }
             const result = await ridersCollection.updateOne(query, updateDoc);
@@ -140,7 +224,7 @@ async function run() {
                         role: 'rider'
                     }
                 }
-                const userResult = await userCollection.updateOne(useQuery,updateUser)
+                const userResult = await userCollection.updateOne(useQuery, updateUser)
             }
             res.send(result)
         })
@@ -148,10 +232,14 @@ async function run() {
         // All Parcel APIs
         app.get("/parcels", async (req, res) => {
             const query = {}
-            const { email } = req.query;
+            const { email, deliveryStatus } = req.query;
 
             if (email) {
                 query.senderEmail = email;
+            }
+
+            if (deliveryStatus) {
+                query.deliveryStatus = deliveryStatus;
             }
 
             const optinos = { sort: { createdAt: -1 } }
@@ -183,6 +271,32 @@ async function run() {
             const query = { _id: new ObjectId(id) };
             const result = await parcelsCollection.deleteOne(query)
             res.send(result)
+        })
+
+        // parcel update
+        app.patch("/parcels/:id", async (req, res) => {
+            const { riderId, riderName, riderEmail, } = req.body;
+            const id = req.params.id;
+            const query = { _id: new ObjectId(id) };
+            const updateDoc = {
+                $set: {
+                    deliveryStatus: 'driver_assigned',
+                    riderId: riderId,
+                    riderName: riderName,
+                    riderEmail: riderEmail
+                }
+            }
+            const result = await parcelsCollection.updateOne(query,updateDoc)
+
+            // update rider information 
+            const riderQuery = {_id:new ObjectId(riderId)}
+            const riderUpdateDoc = {
+                $set:{
+                    workStatus:'in_delivery'
+                }
+            }
+            const riderResult = await ridersCollection.updateOne(riderQuery,riderUpdateDoc)
+            res.send(riderResult)
         })
 
 
@@ -279,6 +393,7 @@ async function run() {
                 const update = {
                     $set: {
                         paymentStatus: 'paid',
+                        deliveryStatus: 'pending-pickup',
                         trackingId: trackingId
                     }
                 }
