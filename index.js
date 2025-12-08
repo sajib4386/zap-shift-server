@@ -174,44 +174,26 @@ async function run() {
         })
 
         // All Pending Rider
-        // app.get('/riders', async (req, res) => {
-        //     const { status, district, workStatus } = req.query;
-        //     const query = {};
-
-        //     if (status) {
-        //         query.status = status;
-        //     }
-        //     if (district) {
-        //         query.district = district;
-        //     }
-        //     if (workStatus) {
-        //         query.workStatus = workStatus;
-        //     }
-
-        //     const cursor = ridersCollection.find(query);
-        //     const result = await cursor.toArray();
-        //     res.send(result)
-        // })
-
         app.get('/riders', async (req, res) => {
+            const { status, district, workStatus } = req.query;
             const query = {};
 
-            if (req.query.status) {
-                query.status = req.query.status;
+            if (status) {
+                query.status = status;
             }
-
-            if (req.query.district && req.query.district !== "undefined") {
-                query.district = req.query.district;
+            if (district) {
+                query.district = district;
             }
-
-            if (req.query.workStatus && req.query.workStatus !== "undefined") {
-                query.workStatus = req.query.workStatus;
+            if (workStatus) {
+                query.workStatus = workStatus;
             }
 
             const cursor = ridersCollection.find(query);
             const result = await cursor.toArray();
-            res.send(result);
-        });
+            res.send(result)
+        })
+
+    
 
 
         // Specific rider API
@@ -291,7 +273,12 @@ async function run() {
 
         app.post("/parcels", async (req, res) => {
             const parcel = req.body;
+            const trackingId = generateTrackingId();
+
             parcel.createdAt = new Date();
+
+            parcel.trackingId = trackingId
+            logTracking(trackingId, 'parcel_created')
             const result = await parcelsCollection.insertOne(parcel);
             res.send(result)
         })
@@ -365,38 +352,6 @@ async function run() {
 
         // Payment Related APIs
 
-        // OLD
-        // app.post('/create-checkout-session', async (req, res) => {
-        //     const paymentInfo = req.body;
-        //     const amount = parseInt(paymentInfo.cost) * 100;
-        //     const session = await stripe.checkout.sessions.create({
-        //         line_items: [
-        //             {
-        //                 // Provide the exact Price ID (for example, price_1234) of the product you want to sell
-        //                 price_data: {
-        //                     currency: 'USD',
-        //                     unit_amount: amount,
-        //                     product_data: {
-        //                         name: paymentInfo.parcelName
-        //                     }
-        //                 },
-        //                 quantity: 1,
-        //             },
-        //         ],
-        //         customer_email: paymentInfo.senderEmail,
-        //         mode: 'payment',
-        //         metadata: {
-        //             parcelId: paymentInfo.parcelId
-        //         },
-        //         success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success`,
-        //         cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment-cancelled`,
-
-        //     });
-        //     console.log(process.env.SITE_DOMAIN)
-        //     console.log(session);
-        //     res.send({ url: session.url })
-        // })
-
         // Payment API
         app.post('/create-checkout-session', async (req, res) => {
             const paymentInfo = req.body;
@@ -419,7 +374,8 @@ async function run() {
                 mode: 'payment',
                 metadata: {
                     parcelId: paymentInfo.parcelId,
-                    parcelName: paymentInfo.parcelName
+                    parcelName: paymentInfo.parcelName,
+                    trackingId:paymentInfo.trackingId
                 },
                 success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
                 cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment-cancelled`,
@@ -449,7 +405,8 @@ async function run() {
                     trackingId: paymentExist.trackingId
                 })
             }
-            const trackingId = generateTrackingId();
+            const trackingId = session.metadata.trackingId
+
             if (session.payment_status === 'paid') {
                 const id = session.metadata.parcelId;
                 const query = { _id: new ObjectId(id) }
@@ -478,7 +435,7 @@ async function run() {
                 if (session.payment_status === 'paid') {
                     const resultPayment = await paymentCollection.insertOne(payment)
 
-                    logTracking(trackingId, 'pending-pickup')
+                    logTracking(trackingId, 'parcel_paid')
 
                     res.send({
                         success: true,
